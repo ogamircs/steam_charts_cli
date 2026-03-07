@@ -129,6 +129,38 @@ test('parseSteamChartsHistory fails clearly when the history table is missing', 
   assert.throws(() => parseSteamChartsHistory('<html><body><h1>No Table</h1></body></html>'), /history table not found/i);
 });
 
+test('renderTrendChart leaves bars empty for zero-valued points', () => {
+  const chart = renderTrendChart({
+    app: { appid: 999, name: 'Zero Game' },
+    historyPoints: [
+      {
+        label: 'January 2026',
+        average_players: 0,
+        peak_players: 0,
+        average_change: null,
+        average_change_pct: null,
+        peak_change: null,
+        peak_change_pct: null,
+        estimated: false,
+      },
+    ],
+    forecastPoints: [
+      {
+        date: '2026-03-08',
+        average_players: 0,
+        peak_players: 0,
+        estimated: true,
+      },
+    ],
+    months: 1,
+    forecastDays: 1,
+    warnings: [],
+  });
+
+  assert.doesNotMatch(chart, /January 2026\s+█/);
+  assert.doesNotMatch(chart, /2026-03-08\s+░/);
+});
+
 test('fetchSteamChartsHistory sends browser-like headers and parses the response body', async () => {
   const result = await fetchSteamChartsHistory({
     appid: 1085660,

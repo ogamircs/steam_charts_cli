@@ -74,6 +74,11 @@ test('rejects command combinations that are not supported', () => {
   assert.throws(() => parseArgs(['history', '730', '--search']), /--search is only supported for the root player lookup command/i);
 });
 
+test('rejects malformed non-integer values for trend window options', () => {
+  assert.throws(() => parseArgs(['history', '730', '--months', '1.5']), /--months must be a positive integer/i);
+  assert.throws(() => parseArgs(['history', '730', '--forecast-days', '30days']), /--forecast-days must be a positive integer/i);
+});
+
 test('steam-charts 730 succeeds without an api key and prints csv', async () => {
   const cacheDir = mkdtempSync(join(tmpdir(), 'steam-charts-cli-cache-'));
 

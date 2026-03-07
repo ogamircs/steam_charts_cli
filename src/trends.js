@@ -238,7 +238,7 @@ function renderSeriesChart(title, historyPoints, forecastPoints, key) {
 function formatChartLine(point, maxValue) {
   const width = 24;
   const ratio = maxValue === 0 ? 0 : point.value / maxValue;
-  const barLength = Math.max(1, Math.round(ratio * width));
+  const barLength = point.value === 0 ? 0 : Math.max(1, Math.round(ratio * width));
   const label = point.label.padEnd(14).slice(0, 14);
   return `${label} ${point.bar.repeat(barLength)} ${formatInteger(point.value)}`;
 }

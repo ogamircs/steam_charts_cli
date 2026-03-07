@@ -207,7 +207,13 @@ function readOptionValue(argv, index, name) {
 }
 
 function parsePositiveInteger(rawValue, name) {
-  const parsed = Number.parseInt(rawValue, 10);
+  const normalized = String(rawValue).trim();
+
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error(`--${name} must be a positive integer`);
+  }
+
+  const parsed = Number.parseInt(normalized, 10);
 
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`--${name} must be a positive integer`);
