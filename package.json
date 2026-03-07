@@ -1,0 +1,17 @@
+{
+  "name": "steam-charts-cli",
+  "version": "0.1.0",
+  "description": "CLI to export Steam current player counts as CSV or JSON.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "steam-charts": "./bin/steam-charts.js"
+  },
+  "scripts": {
+    "test": "node --test",
+    "lint": "node --check bin/steam-charts.js src/*.js test/*.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
