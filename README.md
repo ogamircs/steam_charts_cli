@@ -1,24 +1,15 @@
 # steam-charts-cli
 
-`steam-charts` is a zero-dependency Node.js CLI for looking up Steam apps and exporting current player data as CSV or JSON.
+`steam-charts` is a zero-dependency Node.js CLI for Steam player and store metrics.
 
-It is built around one main flow:
+It supports:
 
-- resolve a Steam app by app id or exact name
-- fetch the current player count from Steam
-- emit one machine-readable record to stdout or a file
-
-It also includes a search mode for finding app ids before you fetch player counts.
-
-## What The CLI Does
-
-- Fetch current player counts by Steam app id
-- Fetch current player counts by exact game name
-- Search the Steam app catalog by keyword
-- Output CSV by default
-- Output JSON when needed
-- Cache the Steam app list locally for faster repeated lookups
-- Read `STEAM_API_KEY` from `--api-key`, the environment, or a local `.env`
+- current concurrent players from the official Steam Web API
+- monthly observed player history from Steam Charts
+- daily forecast output derived from observed history
+- terminal trend charts
+- SteamDB-style store snapshot metrics
+- all-time highest and lowest observed average and peak values
 
 ## Installation
 
@@ -26,19 +17,19 @@ It also includes a search mode for finding app ids before you fetch player count
 
 - Node.js `20+`
 
-### Local install
+### Install dependencies
 
 ```bash
 npm install
 ```
 
-### Use the local entrypoint directly
+### Run locally
 
 ```bash
 node bin/steam-charts.js --help
 ```
 
-### Link it as a local command
+### Link the CLI
 
 ```bash
 npm link
@@ -47,146 +38,200 @@ steam-charts --help
 
 ## Setup
 
-Name-based lookups and catalog search require a Steam Web API key.
+Text-name lookups require a Steam Web API key because the CLI resolves names against the official Steam app list before it fetches metrics.
 
-You can provide it in any of these ways, in this order:
+Supported key sources, in precedence order:
 
 1. `--api-key <key>`
-2. `STEAM_API_KEY` in the shell environment
-3. `STEAM_API_KEY` in a local `.env` file
+2. `STEAM_API_KEY` in your shell
+3. `STEAM_API_KEY` in a local `.env`
 
-### Recommended local setup
+Recommended local setup:
 
 ```bash
 cp .env.example .env
 ```
 
-Then edit `.env`:
+Then set:
 
 ```bash
 STEAM_API_KEY=your-steam-web-api-key
 ```
 
-## Main CLI Commands
+Numeric app-id queries work without an API key.
 
-There are no subcommands. The CLI is one main command with a few modes.
+## Quick Start
 
-### 1. Fetch by app id
+Fetch current concurrent players as CSV:
 
 ```bash
 steam-charts 730
 ```
 
-Default output:
-
-```csv
-appid,name,current_players,queried_at,source
-730,Counter-Strike 2,1234567,2026-03-07T12:00:00.000Z,steam-web-api
-```
-
-Notes:
-
-- This does not require an API key for the player-count request itself.
-- The `name` column is filled from cached app metadata when available.
-
-### 2. Fetch by exact game name
-
-```bash
-steam-charts "Counter-Strike 2"
-```
-
-Notes:
-
-- This requires `STEAM_API_KEY` or `--api-key`.
-- Exact matching is intentional. If there is no unique exact match, the CLI prints candidate apps instead of guessing.
-
-### 3. Search for app ids
-
-```bash
-steam-charts "counter" --search
-```
-
-Example output:
-
-```text
-730	Counter-Strike 2
-10	Counter-Strike
-```
-
-Notes:
-
-- Search requires `STEAM_API_KEY` or `--api-key`.
-- This is the easiest way to discover the app id you want before running the main fetch flow.
-
-### 4. Write output to a file
-
-```bash
-steam-charts 730 --output ./players.csv
-steam-charts 730 --format json --output ./players.json
-```
-
-### 5. Force a fresh app-list refresh
-
-```bash
-steam-charts "Counter-Strike 2" --refresh-app-list
-```
-
-Use this when:
-
-- the local app cache is stale
-- a game was recently added or renamed
-- you want to avoid relying on cached results
-
-### 6. Help and version
-
-```bash
-steam-charts --help
-steam-charts --version
-```
-
-## Options
-
-- `--search`: search the Steam app catalog instead of fetching current player counts
-- `--output <path>`: write the result to a file instead of stdout
-- `--api-key <key>`: override the Steam API key for a single command
-- `--refresh-app-list`: force an app-list refresh before lookup
-- `--format <csv|json>`: output format, default `csv`
-- `-h`, `--help`: print usage
-- `-v`, `--version`: print version
-
-## Output Formats
-
-### CSV
-
-Default format. One header row plus one data row.
-
-Header:
-
-```csv
-appid,name,current_players,queried_at,source
-```
-
-### JSON
+Fetch current concurrent players as JSON:
 
 ```bash
 steam-charts 730 --format json
 ```
 
-Example:
+Resolve by exact game name:
 
-```json
-{
-  "appid": 730,
-  "name": "Counter-Strike 2",
-  "current_players": 1234567,
-  "queried_at": "2026-03-07T12:00:00.000Z",
-  "source": "steam-web-api"
-}
+```bash
+steam-charts "Counter-Strike 2"
 ```
 
-## Cache Behavior
+Search the app catalog:
 
-The Steam app list is cached at:
+```bash
+steam-charts "counter" --search
+```
+
+Fetch observed history plus forecast:
+
+```bash
+steam-charts history 730 --months 12 --forecast-days 30
+```
+
+Render a terminal trend chart:
+
+```bash
+steam-charts chart "Counter-Strike 2" --months 6 --forecast-days 14
+```
+
+Fetch a store snapshot:
+
+```bash
+steam-charts store 730
+steam-charts store 730 --format json
+```
+
+Show all-time extrema:
+
+```bash
+steam-charts highest 730
+steam-charts lowest "Counter-Strike 2" --format json
+```
+
+Write output to a file:
+
+```bash
+steam-charts history 730 --output ./history.json
+steam-charts store 730 --format json --output ./store.json
+```
+
+## Command Reference
+
+### Root lookup
+
+```bash
+steam-charts <query> [--format csv|json] [--output <path>]
+```
+
+- `query` can be a numeric app id or an exact game name
+- default output is one CSV row with header
+- source is always `steam-web-api`
+
+Default CSV columns:
+
+```text
+appid,name,current_players,queried_at,source
+```
+
+### Search
+
+```bash
+steam-charts <query> --search [--refresh-app-list]
+```
+
+- searches the cached official Steam app list
+- requires `STEAM_API_KEY` or `--api-key`
+- prints tab-separated `appid` and `name` lines
+
+### History
+
+```bash
+steam-charts history <query> [--months <n>] [--forecast-days <n>] [--output <path>]
+```
+
+- output is JSON only
+- default `--months` is `12`
+- default `--forecast-days` is `30`
+- observed points include:
+  - `label`
+  - `average_players`
+  - `peak_players`
+  - `average_change`
+  - `average_change_pct`
+  - `peak_change`
+  - `peak_change_pct`
+  - `estimated: false`
+- forecast points include:
+  - `date`
+  - `average_players`
+  - `peak_players`
+  - `estimated: true`
+
+The gain fields are numeric deltas and numeric percent values against the immediately previous observed month in the returned history window. The first returned observed point uses `null` gain fields.
+
+### Chart
+
+```bash
+steam-charts chart <query> [--months <n>] [--forecast-days <n>]
+```
+
+- terminal-only output
+- renders stacked sections for:
+  - average players
+  - peak players
+- uses solid bars for observed points and shaded bars for forecast points
+
+### Store
+
+```bash
+steam-charts store <query> [--format text|json] [--output <path>]
+```
+
+Default fields:
+
+- `daily_active_users_rank`
+- `top_sellers_rank`
+- `wishlist_activity_rank`
+- `followers`
+- `reviews`
+- `captured_at`
+- `source`
+
+### Highest / Lowest
+
+```bash
+steam-charts highest <query> [--format text|json] [--output <path>]
+steam-charts lowest <query> [--format text|json] [--output <path>]
+```
+
+Both commands operate over the full observed Steam Charts monthly history for the app and return:
+
+- `average: { value, label }`
+- `peak: { value, label }`
+
+## Data Sources
+
+The CLI intentionally mixes official and third-party sources depending on what Steam exposes.
+
+| Feature | Source | Notes |
+| --- | --- | --- |
+| Current concurrent players | Steam Web API | Official |
+| App list / name resolution | Steam Web API | Official |
+| Observed monthly history | Steam Charts | Third-party scrape |
+| Forecast | Local Holt linear smoothing | Generated locally |
+| Store snapshot metrics | SteamDB-style page | Third-party scrape |
+
+As of March 7, 2026, Steam does not expose an official retroactive daily player-history API or an official API for the store snapshot metrics shown in this CLI. That makes `history`, `chart`, `store`, `highest`, and `lowest` inherently more brittle than the root current-player lookup.
+
+In live use, SteamDB may also return Cloudflare challenge responses such as `403 Forbidden` to non-browser clients, and Steam Charts can intermittently return edge errors such as `520` or `522`. The CLI surfaces those upstream failures clearly, but it cannot guarantee that the scraped commands will work from every environment at every moment.
+
+## Cache And Resolution Behavior
+
+The app list cache lives at:
 
 ```text
 ~/.steam-charts/app-list.json
@@ -195,13 +240,11 @@ The Steam app list is cached at:
 Behavior:
 
 - cache TTL is 24 hours
-- warm cache skips a catalog refresh
-- `--refresh-app-list` forces a refresh
-- if refresh fails and a stale cache exists, the CLI falls back to the stale cache and prints a warning to `stderr`
+- `--refresh-app-list` forces a refresh before name resolution
+- stale cache is reused if refresh fails and a cache already exists
+- unresolved exact-name lookups fail with candidate suggestions instead of fuzzy auto-selection
 
 ## Architecture
-
-The codebase is intentionally small and split by responsibility.
 
 ```mermaid
 flowchart LR
@@ -212,49 +255,75 @@ flowchart LR
   E --> F["src/steam-api.js"]
   C --> G["src/resolve-app.js"]
   C --> H["src/output.js"]
+  C --> I["src/trends.js"]
+  C --> J["src/store.js"]
 ```
 
 ### Module overview
 
 - `bin/steam-charts.js`
-  Handles process startup, help/version dispatch, and top-level error handling.
+  - process entrypoint
+  - help/version handling
+  - top-level exit code and error output
 
 - `src/cli.js`
-  Parses flags and turns raw argv into a normalized options object.
+  - argv parsing
+  - command detection
+  - command-scoped validation for `--format`, `--months`, `--forecast-days`, and `--output`
 
 - `src/run.js`
-  Main orchestration layer. It chooses between search mode and fetch mode, resolves the app, fetches player counts, and writes output.
+  - top-level command dispatcher
+  - shared app resolution flow
+  - output routing to stdout or files
 
 - `src/query.js`
-  Distinguishes numeric app-id queries from text-name queries.
+  - classifies a query as numeric app id or text name
 
 - `src/app-cache.js`
-  Reads, writes, refreshes, and validates the cached Steam app list.
+  - manages the local Steam app-list cache
+  - handles TTL and stale-cache fallback
 
 - `src/steam-api.js`
-  Encapsulates the Steam HTTP requests for current players and the paginated app list.
+  - official Steam Web API client
+  - current-player request
+  - paginated app-list request
 
 - `src/resolve-app.js`
-  Resolves an exact app name and ranks partial matches for search and error suggestions.
+  - exact-name matching
+  - search ranking
+  - candidate suggestions when name resolution is ambiguous or missing
 
 - `src/output.js`
-  Serializes results into CSV or JSON.
+  - CSV / JSON serialization for root current-player lookups
+
+- `src/trends.js`
+  - Steam Charts page fetch
+  - monthly history parsing
+  - gain calculations
+  - Holt linear smoothing forecast generation
+  - terminal chart rendering
+  - highest / lowest extrema extraction
+
+- `src/store.js`
+  - SteamDB-style store page fetch
+  - store metrics parsing
+  - terminal text formatting for snapshot output
 
 ## Development
 
-### Run tests
+Run the test suite:
 
 ```bash
 npm test
 ```
 
-### Syntax check
+Run the syntax check:
 
 ```bash
 npm run lint
 ```
 
-### Test coverage
+Optional coverage run:
 
 ```bash
 node --test --experimental-test-coverage

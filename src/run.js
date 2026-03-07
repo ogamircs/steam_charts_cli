@@ -6,6 +6,15 @@ import { serializeRecord } from './output.js';
 import { parseQuery } from './query.js';
 import { resolveAppByName, searchApps } from './resolve-app.js';
 import { fetchCurrentPlayers } from './steam-api.js';
+import {
+  addObservedGains,
+  buildForecastPoints,
+  fetchSteamChartsHistory,
+  findExtrema,
+  formatExtremaText,
+  renderTrendChart,
+} from './trends.js';
+import { fetchSteamDbStoreSnapshot, formatStoreSnapshotText } from './store.js';
 
 export async function runSteamCharts({
   output,
@@ -17,11 +26,30 @@ export async function runSteamCharts({
 }) {
   const query = parseQuery(options.query);
   const apiKey = await resolveApiKey(options, env);
+  const command = options.command ?? 'current';
 
   if (options.search) {
     return runSearch({ query, apiKey, options, env, fetchImpl, output, error, now });
   }
 
+  switch (command) {
+    case 'current':
+      return runCurrentLookup({ query, apiKey, options, env, fetchImpl, output, error, now });
+    case 'history':
+      return runHistory({ query, apiKey, options, env, fetchImpl, output, error, now });
+    case 'chart':
+      return runChart({ query, apiKey, options, env, fetchImpl, output, error, now });
+    case 'store':
+      return runStore({ query, apiKey, options, env, fetchImpl, output, error, now });
+    case 'highest':
+    case 'lowest':
+      return runExtrema({ command, query, apiKey, options, env, fetchImpl, output, error, now });
+    default:
+      throw new Error(`Unsupported command: ${command}`);
+  }
+}
+
+async function runCurrentLookup({ query, apiKey, options, env, fetchImpl, output, error, now }) {
   const app = await resolveApp({
     query,
     apiKey,
@@ -31,7 +59,6 @@ export async function runSteamCharts({
     error,
     now,
   });
-
   const currentPlayers = await fetchCurrentPlayers({
     appid: app.appid,
     env,
@@ -50,17 +77,204 @@ export async function runSteamCharts({
     format: options.format,
   });
 
-  if (options.outputPath) {
-    await mkdir(dirname(options.outputPath), { recursive: true });
-    await writeFile(options.outputPath, `${payload}\n`, 'utf8');
-  } else {
-    output.write(`${payload}\n`);
-  }
+  await emitPayload({ payload, outputPath: options.outputPath, output });
 
   return {
     exitCode: 0,
     outputPath: options.outputPath,
     record,
+    text: payload,
+  };
+}
+
+async function runHistory({ query, apiKey, options, env, fetchImpl, output, error, now }) {
+  const app = await resolveApp({
+    query,
+    apiKey,
+    refreshAppList: options.refreshAppList,
+    env,
+    fetchImpl,
+    error,
+    now,
+  });
+  const history = await fetchSteamChartsHistory({
+    appid: app.appid,
+    env,
+    fetchImpl,
+  });
+  const historyPoints = history.points.slice(-options.months);
+  const warnings = [];
+  const forecastPoints = buildForecastPoints({
+    observedPoints: historyPoints,
+    forecastDays: options.forecastDays,
+    now: resolveDate(now),
+  });
+
+  if (historyPoints.length < 3) {
+    warnings.push('Need at least 3 observed monthly points before generating a forecast.');
+  }
+
+  const payloadObject = {
+    app: {
+      appid: app.appid,
+      name: app.name || history.app.name || '',
+    },
+    window: {
+      months: options.months,
+      forecast_days: options.forecastDays,
+      generated_at: resolveDate(now).toISOString(),
+    },
+    history: {
+      points: addObservedGains(historyPoints),
+    },
+    forecast: {
+      points: forecastPoints,
+    },
+    source: {
+      history: 'steamcharts',
+      forecast: 'holt-linear-smoothing',
+    },
+    warnings,
+  };
+  const payload = JSON.stringify(payloadObject, null, 2);
+
+  await emitPayload({ payload, outputPath: options.outputPath, output });
+
+  return {
+    exitCode: 0,
+    outputPath: options.outputPath,
+    text: payload,
+  };
+}
+
+async function runChart({ query, apiKey, options, env, fetchImpl, output, error, now }) {
+  const app = await resolveApp({
+    query,
+    apiKey,
+    refreshAppList: options.refreshAppList,
+    env,
+    fetchImpl,
+    error,
+    now,
+  });
+  const history = await fetchSteamChartsHistory({
+    appid: app.appid,
+    env,
+    fetchImpl,
+  });
+  const historyPoints = history.points.slice(-options.months);
+  const warnings = historyPoints.length < 3
+    ? ['Need at least 3 observed monthly points before generating a forecast.']
+    : [];
+  const forecastPoints = buildForecastPoints({
+    observedPoints: historyPoints,
+    forecastDays: options.forecastDays,
+    now: resolveDate(now),
+  });
+  const payload = renderTrendChart({
+    app: {
+      appid: app.appid,
+      name: app.name || history.app.name || '',
+    },
+    historyPoints: addObservedGains(historyPoints),
+    forecastPoints,
+    months: options.months,
+    forecastDays: options.forecastDays,
+    warnings,
+  });
+
+  output.write(`${payload}\n`);
+
+  return {
+    exitCode: 0,
+    text: payload,
+  };
+}
+
+async function runStore({ query, apiKey, options, env, fetchImpl, output, error, now }) {
+  const app = await resolveApp({
+    query,
+    apiKey,
+    refreshAppList: options.refreshAppList,
+    env,
+    fetchImpl,
+    error,
+    now,
+  });
+  const snapshot = await fetchSteamDbStoreSnapshot({
+    appid: app.appid,
+    env,
+    fetchImpl,
+  });
+  const payloadObject = {
+    app: {
+      appid: app.appid,
+      name: app.name || snapshot.name || '',
+    },
+    daily_active_users_rank: snapshot.daily_active_users_rank,
+    top_sellers_rank: snapshot.top_sellers_rank,
+    wishlist_activity_rank: snapshot.wishlist_activity_rank,
+    followers: snapshot.followers,
+    reviews: snapshot.reviews,
+    captured_at: resolveDate(now).toISOString(),
+    source: 'steamdb',
+  };
+  const payload = options.format === 'json'
+    ? JSON.stringify(payloadObject, null, 2)
+    : formatStoreSnapshotText({
+      app: payloadObject.app,
+      snapshot: {
+        ...payloadObject,
+      },
+    });
+
+  await emitPayload({ payload, outputPath: options.outputPath, output });
+
+  return {
+    exitCode: 0,
+    outputPath: options.outputPath,
+    text: payload,
+  };
+}
+
+async function runExtrema({ command, query, apiKey, options, env, fetchImpl, output, error, now }) {
+  const app = await resolveApp({
+    query,
+    apiKey,
+    refreshAppList: options.refreshAppList,
+    env,
+    fetchImpl,
+    error,
+    now,
+  });
+  const history = await fetchSteamChartsHistory({
+    appid: app.appid,
+    env,
+    fetchImpl,
+  });
+  const extrema = findExtrema(history.points, command);
+  const payloadObject = {
+    app: {
+      appid: app.appid,
+      name: app.name || history.app.name || '',
+    },
+    average: extrema.average,
+    peak: extrema.peak,
+    source: 'steamcharts',
+  };
+  const payload = options.format === 'json'
+    ? JSON.stringify(payloadObject, null, 2)
+    : formatExtremaText({
+      app: payloadObject.app,
+      type: command,
+      extrema,
+    });
+
+  await emitPayload({ payload, outputPath: options.outputPath, output });
+
+  return {
+    exitCode: 0,
+    outputPath: options.outputPath,
     text: payload,
   };
 }
@@ -189,6 +403,16 @@ async function resolveApiKey(options, env) {
   }
 
   return null;
+}
+
+async function emitPayload({ payload, outputPath, output }) {
+  if (outputPath) {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, `${payload}\n`, 'utf8');
+    return;
+  }
+
+  output.write(`${payload}\n`);
 }
 
 async function readDotenvKey(key) {
