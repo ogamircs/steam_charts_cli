@@ -328,3 +328,7 @@ Optional coverage run:
 ```bash
 node --test --experimental-test-coverage
 ```
+
+## Support
+
+If you enjoy this project, buy me some tokens: [buymeacoffee.com/amircs](https://buymeacoffee.com/amircs)
