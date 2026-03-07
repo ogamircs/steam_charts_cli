@@ -11,7 +11,9 @@ test('prints help text', async () => {
   const result = await runCli(['--help']);
 
   assert.equal(result.code, 0);
-  assert.match(result.stdout, /Usage: steam-charts <query>/);
+  assert.match(result.stdout, /steam-charts <query> \[options\]/);
+  assert.match(result.stdout, /steam-charts history <query>/);
+  assert.match(result.stdout, /steam-charts store <query>/);
   assert.match(result.stdout, /--refresh-app-list/);
   assert.match(result.stdout, /--format/);
 });
@@ -28,9 +30,53 @@ test('parses the new steam-specific CLI contract', () => {
   const parsed = parseArgs(['Counter-Strike 2', '--format', 'json', '--refresh-app-list']);
 
   assert.equal(parsed.mode, 'run');
+  assert.equal(parsed.options.command, 'current');
   assert.equal(parsed.options.query, 'Counter-Strike 2');
   assert.equal(parsed.options.format, 'json');
   assert.equal(parsed.options.refreshAppList, true);
+});
+
+test('parses the history subcommand with defaults and trend options', () => {
+  const parsed = parseArgs(['history', 'Counter-Strike 2', '--months', '6', '--forecast-days', '10']);
+
+  assert.equal(parsed.mode, 'run');
+  assert.equal(parsed.options.command, 'history');
+  assert.equal(parsed.options.query, 'Counter-Strike 2');
+  assert.equal(parsed.options.months, 6);
+  assert.equal(parsed.options.forecastDays, 10);
+  assert.equal(parsed.options.format, 'json');
+});
+
+test('parses the store and extrema subcommands with command-scoped formats', () => {
+  const store = parseArgs(['store', '730', '--format', 'json']);
+  assert.equal(store.options.command, 'store');
+  assert.equal(store.options.format, 'json');
+
+  const highest = parseArgs(['highest', '730']);
+  assert.equal(highest.options.command, 'highest');
+  assert.equal(highest.options.format, 'text');
+
+  const lowest = parseArgs(['lowest', '730', '--output', '/tmp/low.json', '--format', 'json']);
+  assert.equal(lowest.options.command, 'lowest');
+  assert.equal(lowest.options.outputPath, '/tmp/low.json');
+  assert.equal(lowest.options.format, 'json');
+});
+
+test('rejects invalid command-scoped formats', () => {
+  assert.throws(() => parseArgs(['history', '730', '--format', 'csv']), /history only supports --format json/i);
+  assert.throws(() => parseArgs(['chart', '730', '--format', 'json']), /chart does not support --format/i);
+  assert.throws(() => parseArgs(['store', '730', '--format', 'csv']), /store format must be one of: text, json/i);
+});
+
+test('rejects command combinations that are not supported', () => {
+  assert.throws(() => parseArgs(['chart', '730', '--output', '/tmp/chart.txt']), /chart does not support --output/i);
+  assert.throws(() => parseArgs(['store', '730', '--months', '3']), /--months and --forecast-days are only supported for history and chart/i);
+  assert.throws(() => parseArgs(['history', '730', '--search']), /--search is only supported for the root player lookup command/i);
+});
+
+test('rejects malformed non-integer values for trend window options', () => {
+  assert.throws(() => parseArgs(['history', '730', '--months', '1.5']), /--months must be a positive integer/i);
+  assert.throws(() => parseArgs(['history', '730', '--forecast-days', '30days']), /--forecast-days must be a positive integer/i);
 });
 
 test('steam-charts 730 succeeds without an api key and prints csv', async () => {

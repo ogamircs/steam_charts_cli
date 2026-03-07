@@ -1,7 +1,7 @@
 {
   "name": "steam-charts-cli",
   "version": "0.1.0",
-  "description": "CLI to export Steam current player counts as CSV or JSON.",
+  "description": "CLI for Steam current players, historical trends, forecasts, store metrics, and extrema.",
   "license": "MIT",
   "type": "module",
   "bin": {

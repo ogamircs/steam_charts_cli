@@ -1,6 +1,8 @@
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { Writable } from 'node:stream';
 
 const BIN_PATH = new URL('../bin/steam-charts.js', import.meta.url);
@@ -92,4 +94,9 @@ export async function withMockServer(handler, callback) {
     server.close();
     await once(server, 'close');
   }
+}
+
+export function readFixture(name) {
+  const fixtureUrl = new URL(`./fixtures/${name}`, import.meta.url);
+  return readFileSync(fileURLToPath(fixtureUrl), 'utf8');
 }
