@@ -42,7 +42,7 @@ Options:
   --api-key <key>         Steam Web API key override for name lookups
   --refresh-app-list      Refresh the cached Steam app list before a name lookup
   --format <...>          Command-scoped output format
-  --months <n>            Observed history window for history/chart (default: 12)
+  --months <n>            Number of calendar months before "Last 30 Days" (default: 12)
   --forecast-days <n>     Forecast horizon for history/chart (default: 30)
   -h, --help              Show help
   -v, --version           Show version

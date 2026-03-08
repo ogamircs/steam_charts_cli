@@ -174,14 +174,15 @@ test('runSteamCharts returns history json with gains and forecast points', async
   assert.equal(payload.app.appid, 730);
   assert.equal(payload.app.name, 'Counter-Strike 2');
   assert.deepEqual(payload.history.points.map((point) => point.label), [
+    'December 2025',
     'January 2026',
     'February 2026',
     'Last 30 Days',
   ]);
   assert.deepEqual(payload.history.points[0], {
-    label: 'January 2026',
-    average_players: 800,
-    peak_players: 1700,
+    label: 'December 2025',
+    average_players: 900,
+    peak_players: 1600,
     average_change: null,
     average_change_pct: null,
     peak_change: null,
@@ -205,6 +206,44 @@ test('runSteamCharts returns history json with gains and forecast points', async
     forecast: 'holt-linear-smoothing',
   });
   assert.deepEqual(payload.warnings, []);
+});
+
+test('runSteamCharts --months N returns Last 30 Days plus N calendar months', async () => {
+  const stdout = createOutputCollector();
+  const stderr = createOutputCollector();
+
+  const result = await runSteamCharts({
+    output: stdout.stream,
+    error: stderr.stream,
+    options: {
+      command: 'history',
+      query: '730',
+      format: 'json',
+      outputPath: null,
+      apiKey: null,
+      refreshAppList: false,
+      months: 4,
+      forecastDays: 0,
+    },
+    env: {
+      STEAM_CHARTS_HISTORY_URL_TEMPLATE: 'https://example.test/history/{appid}',
+    },
+    now: () => new Date('2026-03-07T12:00:00.000Z'),
+    fetchImpl: async () => makeTextResponse(readFixture('steamcharts-history.html')),
+  });
+
+  const payload = JSON.parse(stdout.read());
+
+  assert.equal(result.exitCode, 0);
+  // Fixture has 5 points: Nov, Dec, Jan, Feb, Last 30 Days.
+  // --months 4 → 4 calendar months + Last 30 Days = 5 points total.
+  assert.deepEqual(payload.history.points.map((p) => p.label), [
+    'November 2025',
+    'December 2025',
+    'January 2026',
+    'February 2026',
+    'Last 30 Days',
+  ]);
 });
 
 test('runSteamCharts suppresses forecast when there is insufficient observed history', async () => {

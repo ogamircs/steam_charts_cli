@@ -102,7 +102,8 @@ async function runHistory({ query, apiKey, options, env, fetchImpl, output, erro
     env,
     fetchImpl,
   });
-  const historyPoints = history.points.slice(-options.months);
+  // Include "Last 30 Days" + the previous N calendar-month rows (SteamDB-style).
+  const historyPoints = history.points.slice(-(options.months + 1));
   const warnings = [];
   const forecastPoints = buildForecastPoints({
     observedPoints: historyPoints,
@@ -162,7 +163,8 @@ async function runChart({ query, apiKey, options, env, fetchImpl, output, error,
     env,
     fetchImpl,
   });
-  const historyPoints = history.points.slice(-options.months);
+  // Include "Last 30 Days" + the previous N calendar-month rows (SteamDB-style).
+  const historyPoints = history.points.slice(-(options.months + 1));
   const warnings = historyPoints.length < 3
     ? ['Need at least 3 observed monthly points before generating a forecast.']
     : [];
