@@ -7,6 +7,7 @@ export const PROPHET_FALLBACK_WARNING = 'Prophet forecast failed; falling back t
 const DAY_SECONDS = 24 * 60 * 60;
 const SYNTHETIC_STEP_DAYS = 30;
 const MANUAL_DISABLED_SEASONALITY = { type: 'manual', enabled: false };
+const defaultImportModule = (specifier) => import(specifier);
 
 let prophetRuntimePromise = null;
 
@@ -122,11 +123,16 @@ async function getDefaultProphetRuntime() {
   return prophetRuntimePromise;
 }
 
-async function loadDefaultProphetRuntime() {
+export async function loadDefaultProphetRuntime({
+  resolveAssetUrl = resolvePackageAssetUrl,
+  readFileImpl = readFile,
+  importModule = defaultImportModule,
+} = {}) {
+  const prophetWasmUrl = resolveAssetUrl('@bsull/augurs/prophet', './prophet_bg.wasm');
   const [prophetModule, optimizerModule, prophetWasm] = await Promise.all([
-    import('@bsull/augurs/prophet'),
-    import('@bsull/augurs-prophet-wasmstan'),
-    readFile(resolvePackageAssetUrl('@bsull/augurs/prophet', './prophet_bg.wasm')),
+    importModule('@bsull/augurs/prophet'),
+    importModule('@bsull/augurs-prophet-wasmstan'),
+    readFileImpl(prophetWasmUrl),
   ]);
   await prophetModule.default({ module_or_path: prophetWasm });
 

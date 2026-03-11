@@ -5,6 +5,7 @@ import {
   PROPHET_FALLBACK_WARNING,
   buildSyntheticTimeline,
   forecastObservedPoints,
+  loadDefaultProphetRuntime,
   resetProphetRuntimeForTests,
 } from '../src/forecast.js';
 
@@ -109,6 +110,28 @@ test('forecastObservedPoints falls back to Holt when Prophet initialization fail
   assert.equal(forecast.warning, PROPHET_FALLBACK_WARNING);
   assert.equal(forecast.points.length, 2);
   assert.deepEqual(forecast.points.map((point) => point.date), ['2026-03-08', '2026-03-09']);
+});
+
+test('loadDefaultProphetRuntime resolves the wasm asset before starting dynamic imports', async () => {
+  let importCalls = 0;
+  let readFileCalls = 0;
+
+  await assert.rejects(() => loadDefaultProphetRuntime({
+    resolveAssetUrl: () => {
+      throw new Error('missing wasm asset');
+    },
+    readFileImpl: async () => {
+      readFileCalls += 1;
+      return Buffer.from([]);
+    },
+    importModule: async () => {
+      importCalls += 1;
+      throw new Error('dynamic import should not start');
+    },
+  }), /missing wasm asset/);
+
+  assert.equal(importCalls, 0);
+  assert.equal(readFileCalls, 0);
 });
 
 test('forecastObservedPoints returns no forecast for insufficient observed history', async () => {
