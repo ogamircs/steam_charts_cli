@@ -1,12 +1,12 @@
 # steam-charts-cli
 
-`steam-charts` is a zero-dependency Node.js CLI for Steam player and store metrics.
+`steam-charts` is a Node.js CLI for Steam player and store metrics.
 
 It supports:
 
 - current concurrent players from the official Steam Web API
 - monthly observed player history from Steam Charts
-- daily forecast output derived from observed history
+- daily forecast output derived from observed history with Prophet/WASM
 - terminal trend charts
 - SteamDB-style store snapshot metrics
 - all-time highest and lowest observed average and peak values
@@ -16,6 +16,7 @@ It supports:
 ### Requirements
 
 - Node.js `20+`
+- npm for installing local dependencies
 
 ### Install dependencies
 
@@ -39,6 +40,8 @@ steam-charts --help
 ## Setup
 
 Text-name lookups require a Steam Web API key because the CLI resolves names against the official Steam app list before it fetches metrics.
+
+Historical forecasting does not require Python. The CLI uses a bundled JS/WASM Prophet runtime via `@bsull/augurs` and falls back to the older local Holt model if Prophet initialization or fitting fails.
 
 Supported key sources, in precedence order:
 
@@ -173,6 +176,11 @@ steam-charts history <query> [--months <n>] [--forecast-days <n>] [--output <pat
 
 The gain fields are numeric deltas and numeric percent values against the immediately previous observed month in the returned history window. The first returned observed point uses `null` gain fields.
 
+`source.forecast` is:
+
+- `prophet-wasm` when the JS/WASM Prophet model succeeds
+- `holt-linear-smoothing` when Prophet fails and the CLI falls back locally
+
 ### Chart
 
 ```bash
@@ -201,6 +209,8 @@ Default fields:
 - `captured_at`
 - `source`
 
+If SteamDB is blocked from your environment, the CLI falls back to a partial official Steam snapshot. In that mode, unavailable rank and follower fields are returned as `null` in JSON and shown as `Unavailable` in text output.
+
 ### Highest / Lowest
 
 ```bash
@@ -222,12 +232,12 @@ The CLI intentionally mixes official and third-party sources depending on what S
 | Current concurrent players | Steam Web API | Official |
 | App list / name resolution | Steam Web API | Official |
 | Observed monthly history | Steam Charts | Third-party scrape |
-| Forecast | Local Holt linear smoothing | Generated locally |
-| Store snapshot metrics | SteamDB-style page | Third-party scrape |
+| Forecast | Prophet/WASM via augurs | Falls back to local Holt smoothing if Prophet init or fit fails |
+| Store snapshot metrics | SteamDB-style page | Falls back to partial official Steam store data when SteamDB is blocked |
 
 As of March 7, 2026, Steam does not expose an official retroactive daily player-history API or an official API for the store snapshot metrics shown in this CLI. That makes `history`, `chart`, `store`, `highest`, and `lowest` inherently more brittle than the root current-player lookup.
 
-In live use, SteamDB may also return Cloudflare challenge responses such as `403 Forbidden` to non-browser clients, and Steam Charts can intermittently return edge errors such as `520` or `522`. The CLI surfaces those upstream failures clearly, but it cannot guarantee that the scraped commands will work from every environment at every moment.
+In live use, SteamDB may also return Cloudflare challenge responses such as `403 Forbidden` or explicit scrape bans, and Steam Charts can intermittently return edge errors such as `520`, `521`, or `522`. The CLI now retries transient scrape failures and uses partial official Steam store data when SteamDB is blocked, but it still cannot guarantee that every scraped field will be available from every environment at every moment.
 
 ## Cache And Resolution Behavior
 
@@ -256,7 +266,8 @@ flowchart LR
   C --> G["src/resolve-app.js"]
   C --> H["src/output.js"]
   C --> I["src/trends.js"]
-  C --> J["src/store.js"]
+  I --> J["src/forecast.js"]
+  C --> K["src/store.js"]
 ```
 
 ### Module overview
@@ -300,12 +311,18 @@ flowchart LR
   - Steam Charts page fetch
   - monthly history parsing
   - gain calculations
-  - Holt linear smoothing forecast generation
   - terminal chart rendering
   - highest / lowest extrema extraction
 
+- `src/forecast.js`
+  - synthetic 30-day training timeline
+  - JS/WASM Prophet adapter via augurs
+  - Holt fallback when Prophet init or fit fails
+  - forecast clamping and source/warning metadata
+
 - `src/store.js`
   - SteamDB-style store page fetch
+  - partial official Steam fallback when SteamDB is unavailable
   - store metrics parsing
   - terminal text formatting for snapshot output
 

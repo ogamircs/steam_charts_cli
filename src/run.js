@@ -14,7 +14,9 @@ import {
   formatExtremaText,
   renderTrendChart,
 } from './trends.js';
-import { fetchSteamDbStoreSnapshot, formatStoreSnapshotText } from './store.js';
+import { fetchStoreSnapshot, formatStoreSnapshotText } from './store.js';
+
+const INSUFFICIENT_HISTORY_WARNING = 'Need at least 3 observed monthly points before generating a forecast.';
 
 export async function runSteamCharts({
   output,
@@ -88,38 +90,25 @@ async function runCurrentLookup({ query, apiKey, options, env, fetchImpl, output
 }
 
 async function runHistory({ query, apiKey, options, env, fetchImpl, output, error, now }) {
-  const app = await resolveApp({
+  const { app, historyPoints, warnings } = await loadObservedHistoryContext({
     query,
     apiKey,
-    refreshAppList: options.refreshAppList,
+    options,
     env,
     fetchImpl,
     error,
     now,
   });
-  const history = await fetchSteamChartsHistory({
-    appid: app.appid,
-    env,
-    fetchImpl,
-  });
-  // Include "Last 30 Days" + the previous N calendar-month rows (SteamDB-style).
-  const historyPoints = history.points.slice(-(options.months + 1));
-  const warnings = [];
-  const forecastPoints = buildForecastPoints({
+  const forecast = await buildForecastPoints({
     observedPoints: historyPoints,
     forecastDays: options.forecastDays,
     now: resolveDate(now),
+    preferProphet: env.STEAM_CHARTS_DISABLE_PROPHET !== '1',
   });
-
-  if (historyPoints.length < 3) {
-    warnings.push('Need at least 3 observed monthly points before generating a forecast.');
-  }
+  const allWarnings = appendWarning(warnings, forecast.warning);
 
   const payloadObject = {
-    app: {
-      appid: app.appid,
-      name: app.name || history.app.name || '',
-    },
+    app,
     window: {
       months: options.months,
       forecast_days: options.forecastDays,
@@ -129,15 +118,15 @@ async function runHistory({ query, apiKey, options, env, fetchImpl, output, erro
       points: addObservedGains(historyPoints),
     },
     forecast: {
-      points: forecastPoints,
+      points: forecast.points,
     },
     source: {
       history: 'steamcharts',
-      forecast: 'holt-linear-smoothing',
+      forecast: forecast.source,
     },
-    warnings,
+    warnings: allWarnings,
   };
-  const payload = JSON.stringify(payloadObject, null, 2);
+  const payload = toPrettyJson(payloadObject);
 
   await emitPayload({ payload, outputPath: options.outputPath, output });
 
@@ -149,40 +138,29 @@ async function runHistory({ query, apiKey, options, env, fetchImpl, output, erro
 }
 
 async function runChart({ query, apiKey, options, env, fetchImpl, output, error, now }) {
-  const app = await resolveApp({
+  const { app, historyPoints, warnings } = await loadObservedHistoryContext({
     query,
     apiKey,
-    refreshAppList: options.refreshAppList,
+    options,
     env,
     fetchImpl,
     error,
     now,
   });
-  const history = await fetchSteamChartsHistory({
-    appid: app.appid,
-    env,
-    fetchImpl,
-  });
-  // Include "Last 30 Days" + the previous N calendar-month rows (SteamDB-style).
-  const historyPoints = history.points.slice(-(options.months + 1));
-  const warnings = historyPoints.length < 3
-    ? ['Need at least 3 observed monthly points before generating a forecast.']
-    : [];
-  const forecastPoints = buildForecastPoints({
+  const forecast = await buildForecastPoints({
     observedPoints: historyPoints,
     forecastDays: options.forecastDays,
     now: resolveDate(now),
+    preferProphet: env.STEAM_CHARTS_DISABLE_PROPHET !== '1',
   });
+  const allWarnings = appendWarning(warnings, forecast.warning);
   const payload = renderTrendChart({
-    app: {
-      appid: app.appid,
-      name: app.name || history.app.name || '',
-    },
+    app,
     historyPoints: addObservedGains(historyPoints),
-    forecastPoints,
+    forecastPoints: forecast.points,
     months: options.months,
     forecastDays: options.forecastDays,
-    warnings,
+    warnings: allWarnings,
   });
 
   output.write(`${payload}\n`);
@@ -203,32 +181,30 @@ async function runStore({ query, apiKey, options, env, fetchImpl, output, error,
     error,
     now,
   });
-  const snapshot = await fetchSteamDbStoreSnapshot({
+  const snapshot = await fetchStoreSnapshot({
     appid: app.appid,
     env,
     fetchImpl,
   });
+  if (snapshot.warning) {
+    error.write(`Warning: ${snapshot.warning}\n`);
+  }
   const payloadObject = {
-    app: {
-      appid: app.appid,
-      name: app.name || snapshot.name || '',
-    },
+    app: buildResolvedApp(app, snapshot.name),
     daily_active_users_rank: snapshot.daily_active_users_rank,
     top_sellers_rank: snapshot.top_sellers_rank,
     wishlist_activity_rank: snapshot.wishlist_activity_rank,
     followers: snapshot.followers,
     reviews: snapshot.reviews,
     captured_at: resolveDate(now).toISOString(),
-    source: 'steamdb',
+    source: snapshot.source,
   };
-  const payload = options.format === 'json'
-    ? JSON.stringify(payloadObject, null, 2)
-    : formatStoreSnapshotText({
+  const payload = formatJsonOrText(options.format, payloadObject, () => formatStoreSnapshotText({
       app: payloadObject.app,
       snapshot: {
         ...payloadObject,
       },
-    });
+    }));
 
   await emitPayload({ payload, outputPath: options.outputPath, output });
 
@@ -240,37 +216,27 @@ async function runStore({ query, apiKey, options, env, fetchImpl, output, error,
 }
 
 async function runExtrema({ command, query, apiKey, options, env, fetchImpl, output, error, now }) {
-  const app = await resolveApp({
+  const { app, points } = await loadHistorySource({
     query,
     apiKey,
-    refreshAppList: options.refreshAppList,
+    options,
     env,
     fetchImpl,
     error,
     now,
   });
-  const history = await fetchSteamChartsHistory({
-    appid: app.appid,
-    env,
-    fetchImpl,
-  });
-  const extrema = findExtrema(history.points, command);
+  const extrema = findExtrema(points, command);
   const payloadObject = {
-    app: {
-      appid: app.appid,
-      name: app.name || history.app.name || '',
-    },
+    app,
     average: extrema.average,
     peak: extrema.peak,
     source: 'steamcharts',
   };
-  const payload = options.format === 'json'
-    ? JSON.stringify(payloadObject, null, 2)
-    : formatExtremaText({
+  const payload = formatJsonOrText(options.format, payloadObject, () => formatExtremaText({
       app: payloadObject.app,
       type: command,
       extrema,
-    });
+    }));
 
   await emitPayload({ payload, outputPath: options.outputPath, output });
 
@@ -286,6 +252,8 @@ async function runSearch({ query, apiKey, options, env, fetchImpl, output, error
     throw new Error('Search requires STEAM_API_KEY or --api-key');
   }
 
+  const warn = createLineWriter(error);
+
   const searchTerm = query.kind === 'name' ? query.name : String(query.appid);
 
   const apps = await loadAppList({
@@ -293,14 +261,14 @@ async function runSearch({ query, apiKey, options, env, fetchImpl, output, error
     refresh: options.refreshAppList,
     env,
     fetchImpl,
-    warn: (message) => error.write(`${message}\n`),
+    warn,
     now: resolveDate(now),
   });
 
   const results = searchApps(searchTerm, apps);
 
   if (results.length === 0) {
-    error.write(`No apps found matching "${searchTerm}".\n`);
+    warn(`No apps found matching "${searchTerm}".`);
     return { exitCode: 1 };
   }
 
@@ -320,6 +288,8 @@ async function resolveApp({
   error,
   now,
 }) {
+  const warn = createLineWriter(error);
+
   if (query.kind === 'name') {
     if (!apiKey) {
       throw new Error('Text queries require STEAM_API_KEY or --api-key');
@@ -330,7 +300,7 @@ async function resolveApp({
       refresh: refreshAppList,
       env,
       fetchImpl,
-      warn: (message) => error.write(`${message}\n`),
+      warn,
       now: resolveDate(now),
     });
 
@@ -343,7 +313,7 @@ async function resolveApp({
     refreshAppList,
     env,
     fetchImpl,
-    error,
+    warn,
     now,
   });
 
@@ -360,7 +330,7 @@ async function maybeLoadAppsForAppId({
   refreshAppList,
   env,
   fetchImpl,
-  error,
+  warn,
   now,
 }) {
   const cachePath = defaultCachePath({ env });
@@ -369,7 +339,7 @@ async function maybeLoadAppsForAppId({
   try {
     cached = await readAppListCache({ cachePath });
   } catch (cacheError) {
-    error.write(`Warning: failed to read Steam app cache at ${cachePath}: ${cacheError.message}\n`);
+    warn(`Warning: failed to read Steam app cache at ${cachePath}: ${cacheError.message}`);
   }
 
   if (cached && !refreshAppList) {
@@ -385,9 +355,83 @@ async function maybeLoadAppsForAppId({
     refresh: refreshAppList || !cached,
     env,
     fetchImpl,
-    warn: (message) => error.write(`${message}\n`),
+    warn,
     now: resolveDate(now),
   });
+}
+
+async function loadObservedHistoryContext({ query, apiKey, options, env, fetchImpl, error, now }) {
+  const { app, points } = await loadHistorySource({
+    query,
+    apiKey,
+    options,
+    env,
+    fetchImpl,
+    error,
+    now,
+  });
+  const historyPoints = selectObservedHistoryPoints(points, options.months);
+
+  return {
+    app,
+    historyPoints,
+    warnings: buildHistoryWarnings(historyPoints),
+  };
+}
+
+async function loadHistorySource({ query, apiKey, options, env, fetchImpl, error, now }) {
+  const app = await resolveApp({
+    query,
+    apiKey,
+    refreshAppList: options.refreshAppList,
+    env,
+    fetchImpl,
+    error,
+    now,
+  });
+  const history = await fetchSteamChartsHistory({
+    appid: app.appid,
+    env,
+    fetchImpl,
+  });
+
+  return {
+    app: buildResolvedApp(app, history.app.name),
+    points: history.points,
+  };
+}
+
+function buildResolvedApp(app, fallbackName = '') {
+  return {
+    appid: app.appid,
+    name: app.name || fallbackName || '',
+  };
+}
+
+function selectObservedHistoryPoints(points, months) {
+  return points.slice(-(months + 1));
+}
+
+function buildHistoryWarnings(historyPoints) {
+  return historyPoints.length < 3 ? [INSUFFICIENT_HISTORY_WARNING] : [];
+}
+
+function appendWarning(warnings, warning) {
+  return warning ? [...warnings, warning] : warnings;
+}
+
+function formatJsonOrText(format, payloadObject, renderText) {
+  return format === 'json' ? toPrettyJson(payloadObject) : renderText();
+}
+
+function toPrettyJson(value) {
+  return JSON.stringify(value, null, 2);
+}
+
+function createLineWriter(stream) {
+  return (message) => {
+    stream.write(`${message}\n`);
+  };
 }
 
 async function resolveApiKey(options, env) {

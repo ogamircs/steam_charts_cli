@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const RETRY_DELAY_MS = 250;
+const MAX_TRANSIENT_ATTEMPTS = 2;
 
 export async function loadHtmlPage({
   url,
@@ -15,7 +17,7 @@ export async function loadHtmlPage({
 
   if (useCurlFirst) {
     try {
-      return await loadViaCurl({
+      return await loadViaCurlWithRetries({
         url,
         curlRunner,
       });
@@ -27,7 +29,7 @@ export async function loadHtmlPage({
   }
 
   try {
-    return await loadViaFetch({
+    return await loadViaFetchWithRetries({
       url,
       label,
       fetchImpl,
@@ -83,13 +85,19 @@ async function loadViaFetch({
     ]);
 
     if (!response.ok) {
-      throw new Error(`${label} request failed: ${response.status} ${response.statusText}`);
+      const error = new Error(`${label} request failed: ${response.status} ${response.statusText}`);
+      error.retryable = isRetryableStatus(response.status);
+      throw error;
     }
 
     return await response.text();
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function loadViaFetchWithRetries(options) {
+  return retryTransientRequest(() => loadViaFetch(options));
 }
 
 async function loadViaCurl({ url, curlRunner }) {
@@ -111,8 +119,35 @@ async function loadViaCurl({ url, curlRunner }) {
 
     return stdout;
   } catch (error) {
-    throw new Error(normalizeCurlError(error));
+    const normalized = new Error(normalizeCurlError(error));
+    normalized.code = error?.code;
+    normalized.retryable = isRetryableMessage(normalized.message);
+    throw normalized;
   }
+}
+
+async function loadViaCurlWithRetries(options) {
+  return retryTransientRequest(() => loadViaCurl(options));
+}
+
+async function retryTransientRequest(run) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt < MAX_TRANSIENT_ATTEMPTS; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      lastError = error;
+
+      if (!isRetryableHtmlError(error) || attempt === MAX_TRANSIENT_ATTEMPTS - 1) {
+        throw error;
+      }
+
+      await wait(RETRY_DELAY_MS * (attempt + 1));
+    }
+  }
+
+  throw lastError;
 }
 
 function shouldFallbackToCurl(error) {
@@ -125,6 +160,22 @@ function shouldFallbackToCurl(error) {
 
 function shouldFallbackToFetch(error) {
   return error?.code === 'ENOENT';
+}
+
+function isRetryableHtmlError(error) {
+  if (error?.retryable === true) {
+    return true;
+  }
+
+  return isRetryableMessage(error?.message);
+}
+
+function isRetryableMessage(message) {
+  return /(?:\b408\b|\b429\b|\b5\d\d\b|timed out|timeout|ECONNRESET|EAI_AGAIN|ENOTFOUND|connection reset)/i.test(String(message ?? ''));
+}
+
+function isRetryableStatus(status) {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
 }
 
 function shouldPreferCurl(url) {
@@ -144,4 +195,10 @@ function normalizeCurlError(error) {
   }
 
   return error?.message ?? 'curl request failed';
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

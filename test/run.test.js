@@ -154,7 +154,7 @@ test('runSteamCharts returns history json with gains and forecast points', async
       outputPath: null,
       apiKey: null,
       refreshAppList: false,
-      months: 3,
+      months: 7,
       forecastDays: 2,
     },
     env: {
@@ -163,7 +163,7 @@ test('runSteamCharts returns history json with gains and forecast points', async
     now: () => new Date('2026-03-07T12:00:00.000Z'),
     fetchImpl: async (url) => {
       assert.equal(String(url), 'https://example.test/history/730');
-      return makeTextResponse(readFixture('steamcharts-history.html'));
+      return makeTextResponse(readFixture('steamcharts-history-long.html'));
     },
   });
 
@@ -174,15 +174,19 @@ test('runSteamCharts returns history json with gains and forecast points', async
   assert.equal(payload.app.appid, 730);
   assert.equal(payload.app.name, 'Counter-Strike 2');
   assert.deepEqual(payload.history.points.map((point) => point.label), [
+    'August 2025',
+    'September 2025',
+    'October 2025',
+    'November 2025',
     'December 2025',
     'January 2026',
     'February 2026',
     'Last 30 Days',
   ]);
   assert.deepEqual(payload.history.points[0], {
-    label: 'December 2025',
-    average_players: 900,
-    peak_players: 1600,
+    label: 'August 2025',
+    average_players: 650,
+    peak_players: 1400,
     average_change: null,
     average_change_pct: null,
     peak_change: null,
@@ -191,21 +195,23 @@ test('runSteamCharts returns history json with gains and forecast points', async
   });
   assert.deepEqual(payload.history.points.at(-1), {
     label: 'Last 30 Days',
-    average_players: 1200,
-    peak_players: 2000,
-    average_change: 200,
-    average_change_pct: 20,
-    peak_change: 200,
-    peak_change_pct: 11.11,
+    average_players: 1180,
+    peak_players: 2010,
+    average_change: 160,
+    average_change_pct: 15.69,
+    peak_change: 160,
+    peak_change_pct: 8.65,
     estimated: false,
   });
   assert.equal(payload.forecast.points.length, 2);
   assert.deepEqual(payload.forecast.points.map((point) => point.date), ['2026-03-08', '2026-03-09']);
   assert.deepEqual(payload.source, {
     history: 'steamcharts',
-    forecast: 'holt-linear-smoothing',
+    forecast: 'prophet-wasm',
   });
   assert.deepEqual(payload.warnings, []);
+  assert.ok(payload.forecast.points.every((point) => point.average_players >= 0));
+  assert.ok(payload.forecast.points.every((point) => point.peak_players >= 0));
 });
 
 test('runSteamCharts --months N returns Last 30 Days plus N calendar months', async () => {
@@ -276,6 +282,47 @@ test('runSteamCharts suppresses forecast when there is insufficient observed his
   assert.equal(payload.forecast.points.length, 0);
   assert.match(payload.warnings[0], /at least 3 observed monthly points/i);
   assert.equal(stderr.read(), '');
+});
+
+test('runSteamCharts falls back to Holt and emits a warning when Prophet fails', async () => {
+  const stdout = createOutputCollector();
+  const stderr = createOutputCollector();
+  const originalEnv = process.env.STEAM_CHARTS_DISABLE_PROPHET;
+  process.env.STEAM_CHARTS_DISABLE_PROPHET = '1';
+
+  try {
+    const result = await runSteamCharts({
+      output: stdout.stream,
+      error: stderr.stream,
+      options: {
+        command: 'history',
+        query: '730',
+        format: 'json',
+        outputPath: null,
+        apiKey: null,
+        refreshAppList: false,
+        months: 3,
+        forecastDays: 2,
+      },
+      env: {
+        STEAM_CHARTS_HISTORY_URL_TEMPLATE: 'https://example.test/history/{appid}',
+      },
+      now: () => new Date('2026-03-07T12:00:00.000Z'),
+      fetchImpl: async () => makeTextResponse(readFixture('steamcharts-history.html')),
+    });
+
+    const payload = JSON.parse(stdout.read());
+    assert.equal(result.exitCode, 0);
+    assert.equal(payload.source.forecast, 'holt-linear-smoothing');
+    assert.match(payload.warnings.at(-1), /falling back to Holt linear smoothing/i);
+    assert.equal(stderr.read(), '');
+  } finally {
+    if (originalEnv === undefined) {
+      delete process.env.STEAM_CHARTS_DISABLE_PROPHET;
+    } else {
+      process.env.STEAM_CHARTS_DISABLE_PROPHET = originalEnv;
+    }
+  }
 });
 
 test('runSteamCharts renders a terminal trend chart', async () => {
@@ -352,6 +399,77 @@ test('runSteamCharts returns a store snapshot as json', async () => {
   assert.equal(payload.reviews, 644619);
   assert.equal(payload.source, 'steamdb');
   assert.equal(payload.captured_at, '2026-03-07T12:00:00.000Z');
+});
+
+test('runSteamCharts falls back to partial official Steam store data when SteamDB is blocked', async () => {
+  const stdout = createOutputCollector();
+  const stderr = createOutputCollector();
+
+  const result = await runSteamCharts({
+    output: stdout.stream,
+    error: stderr.stream,
+    options: {
+      command: 'store',
+      query: '1085660',
+      format: 'json',
+      outputPath: null,
+      apiKey: null,
+      refreshAppList: false,
+      months: 12,
+      forecastDays: 30,
+    },
+    env: {
+      STEAM_CHARTS_STORE_URL_TEMPLATE: 'https://example.test/store/{appid}',
+      STEAM_CHARTS_OFFICIAL_STORE_APPDETAILS_URL_TEMPLATE: 'https://example.test/appdetails/{appid}',
+    },
+    now: () => new Date('2026-03-11T04:00:00.000Z'),
+    fetchImpl: async (url) => {
+      const value = String(url);
+
+      if (value === 'https://example.test/store/1085660') {
+        return {
+          ok: false,
+          status: 403,
+          statusText: 'Forbidden',
+          async text() {
+            return 'forbidden';
+          },
+        };
+      }
+
+      if (value === 'https://example.test/appdetails/1085660') {
+        return makeJsonResponse({
+          1085660: {
+            success: true,
+            data: {
+              name: 'Destiny 2',
+              recommendations: {
+                total: 123456,
+              },
+            },
+          },
+        });
+      }
+
+      throw new Error(`Unexpected URL: ${value}`);
+    },
+  });
+
+  const payload = JSON.parse(stdout.read());
+
+  assert.equal(result.exitCode, 0);
+  assert.match(stderr.read(), /using partial official Steam store data/i);
+  assert.deepEqual(payload.app, {
+    appid: 1085660,
+    name: 'Destiny 2',
+  });
+  assert.equal(payload.daily_active_users_rank, null);
+  assert.equal(payload.top_sellers_rank, null);
+  assert.equal(payload.wishlist_activity_rank, null);
+  assert.equal(payload.followers, null);
+  assert.equal(payload.reviews, 123456);
+  assert.equal(payload.source, 'steam-store-partial');
+  assert.equal(payload.captured_at, '2026-03-11T04:00:00.000Z');
 });
 
 test('runSteamCharts returns extrema summaries as json', async () => {

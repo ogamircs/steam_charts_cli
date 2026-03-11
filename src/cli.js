@@ -1,8 +1,42 @@
 const ROOT_FORMATS = new Set(['csv', 'json']);
 const TEXT_FORMATS = new Set(['text', 'json']);
-const SUBCOMMANDS = new Set(['history', 'chart', 'store', 'highest', 'lowest']);
 const DEFAULT_MONTHS = 12;
 const DEFAULT_FORECAST_DAYS = 30;
+
+const COMMAND_CONFIG = {
+  current: {
+    defaultFormat: 'csv',
+    supportsFormatOption: true,
+    validateFormat(format) {
+      if (!ROOT_FORMATS.has(format)) {
+        throw new Error('format must be one of: csv, json');
+      }
+    },
+  },
+  history: {
+    defaultFormat: 'json',
+    supportsFormatOption: true,
+    validateFormat(format) {
+      if (format !== 'json') {
+        throw new Error('history only supports --format json');
+      }
+    },
+  },
+  chart: {
+    defaultFormat: 'text',
+    supportsFormatOption: false,
+    validateOptions({ outputProvided }) {
+      if (outputProvided) {
+        throw new Error('chart does not support --output');
+      }
+    },
+  },
+  store: createTextCommandConfig('store'),
+  highest: createTextCommandConfig('highest'),
+  lowest: createTextCommandConfig('lowest'),
+};
+
+const SUBCOMMANDS = new Set(Object.keys(COMMAND_CONFIG).filter((command) => command !== 'current'));
 
 export const DEFAULT_OPTIONS = {
   command: 'current',
@@ -86,8 +120,8 @@ export function parseArgs(argv) {
       case '--version':
         return { mode: 'version' };
       case '--format':
-        if (command === 'chart') {
-          throw new Error('chart does not support --format');
+        if (!getCommandConfig(command).supportsFormatOption) {
+          throw new Error(`${command} does not support --format`);
         }
         options.format = readOptionValue(argv, ++index, 'format');
         formatProvided = true;
@@ -141,17 +175,7 @@ export function parseArgs(argv) {
 }
 
 function defaultFormat(command) {
-  switch (command) {
-    case 'history':
-      return 'json';
-    case 'store':
-    case 'highest':
-    case 'lowest':
-    case 'chart':
-      return 'text';
-    default:
-      return 'csv';
-  }
+  return getCommandConfig(command).defaultFormat;
 }
 
 function validateCommandOptions(options, {
@@ -160,32 +184,10 @@ function validateCommandOptions(options, {
   monthsProvided,
   forecastDaysProvided,
 }) {
-  switch (options.command) {
-    case 'current':
-      if (!ROOT_FORMATS.has(options.format)) {
-        throw new Error('format must be one of: csv, json');
-      }
-      break;
-    case 'history':
-      if (options.format !== 'json') {
-        throw new Error('history only supports --format json');
-      }
-      break;
-    case 'store':
-    case 'highest':
-    case 'lowest':
-      if (!TEXT_FORMATS.has(options.format)) {
-        throw new Error(`${options.command} format must be one of: text, json`);
-      }
-      break;
-    case 'chart':
-      if (outputProvided) {
-        throw new Error('chart does not support --output');
-      }
-      break;
-    default:
-      throw new Error(`Unsupported command: ${options.command}`);
-  }
+  const commandConfig = getCommandConfig(options.command);
+
+  commandConfig.validateFormat?.(options.format);
+  commandConfig.validateOptions?.({ outputProvided });
 
   if (options.search && options.command !== 'current') {
     throw new Error('--search is only supported for the root player lookup command');
@@ -194,6 +196,28 @@ function validateCommandOptions(options, {
   if ((monthsProvided || forecastDaysProvided) && !['history', 'chart'].includes(options.command)) {
     throw new Error('--months and --forecast-days are only supported for history and chart');
   }
+}
+
+function getCommandConfig(command) {
+  const commandConfig = COMMAND_CONFIG[command];
+
+  if (!commandConfig) {
+    throw new Error(`Unsupported command: ${command}`);
+  }
+
+  return commandConfig;
+}
+
+function createTextCommandConfig(command) {
+  return {
+    defaultFormat: 'text',
+    supportsFormatOption: true,
+    validateFormat(format) {
+      if (!TEXT_FORMATS.has(format)) {
+        throw new Error(`${command} format must be one of: text, json`);
+      }
+    },
+  };
 }
 
 function readOptionValue(argv, index, name) {
