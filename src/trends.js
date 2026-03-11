@@ -3,6 +3,8 @@ const OBSERVED_BAR = '█';
 const FORECAST_BAR = '░';
 
 import { loadHtmlPage } from './html-page.js';
+import { buildTemplateUrl, decodeHtmlEntities, extractAppName, formatInteger } from './scrape-utils.js';
+import { forecastObservedPoints } from './forecast.js';
 
 export async function fetchSteamChartsHistory({
   appid,
@@ -28,6 +30,7 @@ export function parseSteamChartsHistory(html) {
   const appName = extractAppName(html, {
     headlinePattern: /<h1\b[^>]*>([\s\S]*?)<\/h1>/i,
     titleSuffix: /\s*-\s*Steam Charts\s*$/i,
+    normalizeText,
   });
 
   const tbodyMatch = html.match(/<tbody\b[^>]*>([\s\S]*?)<\/tbody>/i);
@@ -77,32 +80,17 @@ export function addObservedGains(points) {
   });
 }
 
-export function buildForecastPoints({
+export async function buildForecastPoints({
   observedPoints,
   forecastDays,
   now = new Date(),
+  preferProphet = true,
 }) {
-  if (!Number.isInteger(forecastDays) || forecastDays <= 0) {
-    return [];
-  }
-
-  if (!Array.isArray(observedPoints) || observedPoints.length < 3) {
-    return [];
-  }
-
-  const averageModel = fitHoltLinear(observedPoints.map((point) => point.average_players));
-  const peakModel = fitHoltLinear(observedPoints.map((point) => point.peak_players));
-  const startDate = resolveDate(now);
-
-  return Array.from({ length: forecastDays }, (_value, index) => {
-    const day = index + 1;
-
-    return {
-      date: addUtcDays(startDate, day).toISOString().slice(0, 10),
-      average_players: projectDailyValue(averageModel, day),
-      peak_players: projectDailyValue(peakModel, day),
-      estimated: true,
-    };
+  return forecastObservedPoints({
+    observedPoints,
+    forecastDays,
+    now,
+    preferProphet,
   });
 }
 
@@ -243,25 +231,6 @@ function formatChartLine(point, maxValue) {
   return `${label} ${point.bar.repeat(barLength)} ${formatInteger(point.value)}`;
 }
 
-function fitHoltLinear(values, { alpha = 0.7, beta = 0.3 } = {}) {
-  let level = values[0];
-  let trend = values[1] - values[0];
-
-  for (let index = 1; index < values.length; index += 1) {
-    const value = values[index];
-    const previousLevel = level;
-    level = alpha * value + (1 - alpha) * (level + trend);
-    trend = beta * (level - previousLevel) + (1 - beta) * trend;
-  }
-
-  return { level, trend };
-}
-
-function projectDailyValue(model, day) {
-  const fractionalMonth = day / 30;
-  return Math.max(0, roundTo(2, model.level + fractionalMonth * model.trend));
-}
-
 function computePercentChange(previousValue, nextValue) {
   if (previousValue === 0) {
     return null;
@@ -295,52 +264,7 @@ function normalizeText(value) {
   );
 }
 
-function extractAppName(html, { headlinePattern, titleSuffix }) {
-  const headlineMatch = html.match(headlinePattern);
-  if (headlineMatch) {
-    return normalizeText(headlineMatch[1]);
-  }
-
-  const titleMatch = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
-  if (titleMatch) {
-    return normalizeText(titleMatch[1]).replace(titleSuffix, '').trim();
-  }
-
-  return '';
-}
-
-function buildTemplateUrl(template, appid) {
-  return template.replaceAll('{appid}', String(appid));
-}
-
-function addUtcDays(date, days) {
-  const next = new Date(date.getTime());
-  next.setUTCDate(next.getUTCDate() + days);
-  return next;
-}
-
-function resolveDate(now) {
-  return now instanceof Date ? now : new Date(now);
-}
-
 function roundTo(decimals, value) {
   const factor = 10 ** decimals;
   return Math.round(value * factor) / factor;
-}
-
-function formatInteger(value) {
-  return new Intl.NumberFormat('en-US', {
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
-function decodeHtmlEntities(value) {
-  return value
-    .replaceAll('&amp;', '&')
-    .replaceAll('&quot;', '"')
-    .replaceAll('&#39;', "'")
-    .replaceAll('&apos;', "'")
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&nbsp;', ' ');
 }

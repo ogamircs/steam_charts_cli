@@ -11,6 +11,10 @@
     "test": "node --test",
     "lint": "node --check bin/steam-charts.js src/*.js test/*.js"
   },
+  "dependencies": {
+    "@bsull/augurs": "^0.10.2",
+    "@bsull/augurs-prophet-wasmstan": "^0.2.0"
+  },
   "engines": {
     "node": ">=20"
   }

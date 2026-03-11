@@ -77,3 +77,29 @@ test('loadHtmlPage normalizes curl failures into short upstream errors', async (
     },
   }), /Example page request failed: The requested URL returned error: 522/);
 });
+
+test('loadHtmlPage retries curl on transient upstream errors before succeeding', async () => {
+  let attempts = 0;
+
+  const html = await loadHtmlPage({
+    url: 'https://example.com/page',
+    label: 'Example page',
+    preferCurl: true,
+    curlRunner: async () => {
+      attempts += 1;
+
+      if (attempts === 1) {
+        const error = new Error('curl failed');
+        error.stderr = 'curl: (22) The requested URL returned error: 521';
+        throw error;
+      }
+
+      return {
+        stdout: '<html>retried</html>',
+      };
+    },
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(html, '<html>retried</html>');
+});

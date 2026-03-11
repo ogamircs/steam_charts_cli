@@ -68,8 +68,8 @@ test('addObservedGains appends numeric gain and percent fields to observed histo
   ]);
 });
 
-test('buildForecastPoints generates requested daily forecast points and clamps negatives to zero', () => {
-  const forecast = buildForecastPoints({
+test('buildForecastPoints generates requested daily forecast points and returns prophet metadata', async () => {
+  const forecast = await buildForecastPoints({
     observedPoints: [
       { label: 'January 2026', average_players: 100, peak_players: 200, estimated: false },
       { label: 'February 2026', average_players: 50, peak_players: 100, estimated: false },
@@ -77,13 +77,16 @@ test('buildForecastPoints generates requested daily forecast points and clamps n
     ],
     forecastDays: 3,
     now: new Date('2026-03-07T12:00:00.000Z'),
+    preferProphet: false,
   });
 
-  assert.equal(forecast.length, 3);
-  assert.deepEqual(forecast.map((point) => point.date), ['2026-03-08', '2026-03-09', '2026-03-10']);
-  assert.ok(forecast.every((point) => point.average_players >= 0));
-  assert.ok(forecast.every((point) => point.peak_players >= 0));
-  assert.ok(forecast.every((point) => point.estimated === true));
+  assert.equal(forecast.source, 'holt-linear-smoothing');
+  assert.equal(forecast.warning, null);
+  assert.equal(forecast.points.length, 3);
+  assert.deepEqual(forecast.points.map((point) => point.date), ['2026-03-08', '2026-03-09', '2026-03-10']);
+  assert.ok(forecast.points.every((point) => point.average_players >= 0));
+  assert.ok(forecast.points.every((point) => point.peak_players >= 0));
+  assert.ok(forecast.points.every((point) => point.estimated === true));
 });
 
 test('findExtrema returns highest and lowest observed average and peak values', () => {
@@ -100,19 +103,20 @@ test('findExtrema returns highest and lowest observed average and peak values', 
   });
 });
 
-test('renderTrendChart renders stacked average and peak sections with a legend', () => {
+test('renderTrendChart renders stacked average and peak sections with a legend', async () => {
   const { app, points } = parseSteamChartsHistory(readFixture('steamcharts-history.html'));
   const historyPoints = addObservedGains(points.slice(-3));
-  const forecastPoints = buildForecastPoints({
+  const forecast = await buildForecastPoints({
     observedPoints: points.slice(-3),
     forecastDays: 2,
     now: new Date('2026-03-07T12:00:00.000Z'),
+    preferProphet: false,
   });
 
   const chart = renderTrendChart({
     app: { appid: 730, name: app.name },
     historyPoints,
-    forecastPoints,
+    forecastPoints: forecast.points,
     months: 3,
     forecastDays: 2,
     warnings: [],
